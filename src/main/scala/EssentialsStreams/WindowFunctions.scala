@@ -5,8 +5,9 @@ import org.apache.flink.api.common.eventtime.{SerializableTimestampAssigner, Wat
 import org.apache.flink.api.common.functions.AggregateFunction
 import org.apache.flink.streaming.api.scala._
 import org.apache.flink.streaming.api.scala.function.{AllWindowFunction, ProcessAllWindowFunction, ProcessWindowFunction, WindowFunction}
-import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows
+import org.apache.flink.streaming.api.windowing.assigners.{EventTimeSessionWindows, GlobalWindows, SlidingEventTimeWindows, TumblingEventTimeWindows}
 import org.apache.flink.streaming.api.windowing.time.Time
+import org.apache.flink.streaming.api.windowing.triggers.CountTrigger
 import org.apache.flink.streaming.api.windowing.windows.{GlobalWindow, TimeWindow}
 import org.apache.flink.util.Collector
 
@@ -48,6 +49,8 @@ object WindowFunctions {
     )
 
   // how many players were registered every 3s?
+  // [0, 3] [3, 6] [6, 9]
+
   val threeSecondsTumblingWindow: AllWindowedStream[ServerEvent, TimeWindow] =
       source.windowAll(TumblingEventTimeWindows.of(Time.seconds(3)))
 
@@ -99,7 +102,106 @@ object WindowFunctions {
     env.execute()
   }
 
+  /**
+   * Keyed streams and Window functions
+   */
+  // each element will be assigned to another stream for its own key
+  val streamByType: KeyedStream[ServerEvent, String] = source.keyBy(e => e.getClass.getSimpleName)
+
+  // for every key there is a separate window allocation
+  val threeSecondsTumblingWindowsByType = streamByType.window(TumblingEventTimeWindows.of(Time.seconds(3)))
+
+  class CountByWindow extends WindowFunction[ServerEvent, String, String, TimeWindow] {
+    override def apply(key: String, window: TimeWindow, input: Iterable[ServerEvent], out: Collector[String]): Unit =
+      out.collect(s"$key: $window, ${input.size}")
+  }
+
+  def countByTypeByWindow(): Unit = {
+    threeSecondsTumblingWindowsByType
+      .apply(new CountByWindow)
+      .print
+
+    env.execute
+  }
+
+  // counting with ProcessWindowFunction
+  class CountByWindowV2 extends ProcessWindowFunction[ServerEvent, String, String, TimeWindow] {
+    override def process(key: String, context: Context, elements: Iterable[ServerEvent], out: Collector[String]): Unit = {
+      val window = context.window
+      val registrationEventCount = elements.count(event => event.isInstanceOf[PlayerRegistered])
+      out.collect(s"$key: $window, ${elements.size}")
+    }
+  }
+
+  def countByTypeByWindowV2(): Unit = {
+    threeSecondsTumblingWindowsByType
+      .process(new CountByWindowV2)
+      .print
+
+    env.execute
+  }
+
+  // how many player were registered every 3 seconds, updated every 1s
+  // [0, 3] [1, 4] [2, 5]
+
+  def slidingAllWindows(): Unit = {
+    val windowSize: Time = Time.seconds(3)
+    val slidingTime: Time = Time.seconds(1)
+
+    val slidingWindowsAll = source.windowAll(SlidingEventTimeWindows.of(windowSize, slidingTime))
+
+    slidingWindowsAll
+      .apply(new CountByWindowAll)
+      .print
+
+    env.execute
+  }
+
+  /**
+   * Session windows
+   *
+   * Group of events with no more than
+   * a certain time gap between them
+   */
+
+  // how many registration events is there with no more than 1s apart?
+
+  def sessionWindows(): Unit = {
+    val groupBySessionWindows = source.windowAll(EventTimeSessionWindows.withGap(Time.seconds(1)))
+
+    // can use any kind of window function
+    groupBySessionWindows.apply(new CountByWindowAll)
+      .print
+
+    env.execute
+  }
+
+  /**
+   * Global window
+   *
+   */
+
+  // how many registration events every 10 events
+
+  // counting with AllWindowFunction
+  class CountByGlobalWindowAll extends AllWindowFunction[ServerEvent, String, GlobalWindow] {
+    override def apply(window: GlobalWindow, input: Iterable[ServerEvent], out: Collector[String]): Unit = {
+      val registrationEventCount = input.count(event => event.isInstanceOf[PlayerRegistered])
+      out.collect(s"Window [${window}] $registrationEventCount")
+    }
+  }
+
+  def globalWindow(): Unit = {
+    val globalWindowEvents = source.windowAll(GlobalWindows.create())
+      .trigger(CountTrigger.of[GlobalWindow](10))
+      .apply(new CountByGlobalWindowAll)
+
+    globalWindowEvents.print
+
+    env.execute
+  }
+
   def main(args: Array[String]): Unit = {
-    countByWindowV3()
+    globalWindow()
   }
 }
