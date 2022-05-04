@@ -201,7 +201,31 @@ object WindowFunctions {
     env.execute
   }
 
+  /**
+   * Exercise
+   *
+   * What was the time window when we had the most number
+   * of registration events?
+   */
+
+  class KeepWindowAndCountFunction extends AllWindowFunction[ServerEvent, (TimeWindow, Long), TimeWindow] {
+    override def apply(window: TimeWindow, input: Iterable[ServerEvent], out: Collector[(TimeWindow, Long)]): Unit =
+      out.collect((window, input.size))
+  }
+
+  def exercise(): Unit = {
+    val slidingWindows: DataStream[(TimeWindow, Long)] = source
+      .filter(_.isInstanceOf[PlayerRegistered])
+      .windowAll(SlidingEventTimeWindows.of(Time.seconds(2), Time.seconds(1)))
+      .apply(new KeepWindowAndCountFunction)
+
+    val localWindows: List[(TimeWindow, Long)] = slidingWindows.executeAndCollect().toList
+    val bestWindows: (TimeWindow, Long) = localWindows.maxBy(_._2)
+
+    println(s"The best window is ${bestWindows._1} with ${bestWindows._2} registration events")
+  }
+
   def main(args: Array[String]): Unit = {
-    globalWindow()
+    exercise()
   }
 }
