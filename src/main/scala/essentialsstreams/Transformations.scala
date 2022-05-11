@@ -1,4 +1,4 @@
-package EssentialsStreams
+package essentialsstreams
 
 import org.apache.flink.api.common.functions.{FlatMapFunction, MapFunction, ReduceFunction}
 import org.apache.flink.streaming.api.functions.ProcessFunction

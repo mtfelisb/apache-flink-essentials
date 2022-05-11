@@ -1,6 +1,6 @@
-package EssentialsStreams
+package essentialsstreams
 
-import Generators.Gaming._
+import generators.Gaming._
 import org.apache.flink.api.common.eventtime.{SerializableTimestampAssigner, WatermarkStrategy}
 import org.apache.flink.api.common.functions.AggregateFunction
 import org.apache.flink.streaming.api.scala._
